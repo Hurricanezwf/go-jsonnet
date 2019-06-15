@@ -22,7 +22,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -1079,7 +1081,43 @@ func buildBuiltinMap(builtins []builtin) map[string]evalCallable {
 	return result
 }
 
+// builtinHttpPost 向某个地址发送HTTP Post请求
+func builtinHttpPost(i *interpreter, trace TraceElement, url, body value) (value, error) {
+	urlStr, err := i.getString(url, trace)
+	if err != nil {
+		return nil, err
+	}
+	if urlStr.getString() == "" {
+		return nil, i.Error("Missing url when call `std.httpPost`", trace)
+	}
+
+	bodyStr, err := i.getString(body, trace)
+	if err != nil {
+		return nil, err
+	}
+
+	//
+	rsp, err := http.Post(urlStr.getString(), "application/json", bytes.NewBufferString(bodyStr.getString()))
+	if err != nil {
+		return nil, fmt.Errorf("Send HTTP post request failed, %v", err)
+	}
+	defer rsp.Body.Close()
+
+	b, err := ioutil.ReadAll(rsp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("Read response body failed, %v", err)
+	}
+	if rsp.StatusCode >= 400 {
+		return nil, fmt.Errorf("Send HTTP post request failed, statusCode is %d, body: %s", rsp.StatusCode, string(b))
+	}
+
+	return makeValueString(string(b)), nil
+}
+
 var funcBuiltins = buildBuiltinMap([]builtin{
+	// 扩展库
+	&binaryBuiltin{name: "httpPost", function: builtinHttpPost, parameters: ast.Identifiers{"url", "body"}},
+	// 自带的标准库
 	&unaryBuiltin{name: "extVar", function: builtinExtVar, parameters: ast.Identifiers{"x"}},
 	&unaryBuiltin{name: "length", function: builtinLength, parameters: ast.Identifiers{"x"}},
 	&unaryBuiltin{name: "toString", function: builtinToString, parameters: ast.Identifiers{"a"}},
