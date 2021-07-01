@@ -26,8 +26,10 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/google/go-jsonnet/ast"
 )
@@ -1114,9 +1116,72 @@ func builtinHttpPost(i *interpreter, trace TraceElement, url, body value) (value
 	return makeValueString(string(b)), nil
 }
 
+// builtinGoTemplate 用对象中的值渲染 go text template
+func builtinGoTemplate(i *interpreter, trace TraceElement, templateValue, params value) (value, error) {
+	if params == nil || params.getType() != objectType {
+		return nil, fmt.Errorf("bad input parameter type, object type should be provided but %s got", params.getType().name)
+	}
+
+	var (
+		err          error
+		structFields []reflect.StructField
+		structValues []string
+		objectParams = params.(valueObject)
+	)
+
+	// 将模板转换成string类型
+	var jsonString string
+	switch v := templateValue.(type) {
+	case *valueString:
+		jsonString = v.getString()
+	default:
+		var buf bytes.Buffer
+		err := i.manifestAndSerializeJSON(&buf, trace, templateValue, true, "   ")
+		if err != nil {
+			return nil, err
+		}
+		jsonString = buf.String()
+	}
+
+	tpl, err := template.New("render").Parse(jsonString)
+	if err != nil {
+		return nil, fmt.Errorf("bad golang text template, %w", err)
+	}
+
+	// 构造运行时struct
+	for _, fieldName := range objectFields(params.(valueObject), withoutHidden) {
+		fieldValue, err := objectParams.index(i, trace, fieldName)
+		if err != nil {
+			return nil, fmt.Errorf("read field value from params with key `%s` failed, %w", fieldName, err)
+		}
+		if fieldValue.getType() != stringType {
+			return nil, fmt.Errorf("value for field `%s` must be string, but it is %s", fieldName, fieldValue.getType().name)
+		}
+		structValues = append(structValues, fieldValue.(*valueString).getString())
+		structFields = append(structFields, reflect.StructField{
+			Name: fieldName,
+			Type: reflect.TypeOf(string("")),
+		})
+	}
+
+	v := reflect.New(reflect.StructOf(structFields)).Elem()
+	for idx, value := range structValues {
+		v.Field(idx).SetString(value)
+	}
+
+	// 模板渲染
+	buf := bytes.NewBuffer(nil)
+	if err = tpl.Execute(buf, v.Addr().Interface()); err != nil {
+		return nil, fmt.Errorf("execute go text tender failed, %w", err)
+	}
+
+	return makeValueString(buf.String()), nil
+}
+
 var funcBuiltins = buildBuiltinMap([]builtin{
 	// 扩展库
 	&binaryBuiltin{name: "httpPost", function: builtinHttpPost, parameters: ast.Identifiers{"url", "body"}},
+	&binaryBuiltin{name: "goTemplate", function: builtinGoTemplate, parameters: ast.Identifiers{"template", "params"}},
 	// 自带的标准库
 	&unaryBuiltin{name: "extVar", function: builtinExtVar, parameters: ast.Identifiers{"x"}},
 	&unaryBuiltin{name: "length", function: builtinLength, parameters: ast.Identifiers{"x"}},
