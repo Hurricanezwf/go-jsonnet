@@ -1155,7 +1155,7 @@ func builtinGoTemplate(i *interpreter, trace TraceElement, templateValue, params
 			return nil, fmt.Errorf("read field value from params with key `%s` failed, %w", fieldName, err)
 		}
 		if fieldValue.getType() != stringType {
-			return nil, fmt.Errorf("value for field `%s` must be string, but it is %s", fieldName, fieldValue.getType().name)
+			continue
 		}
 		structValues = append(structValues, fieldValue.(*valueString).getString())
 		structFields = append(structFields, reflect.StructField{
